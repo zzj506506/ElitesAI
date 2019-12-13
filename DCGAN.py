@@ -18,15 +18,11 @@ batch_size=256
 transform=transforms.Compose([
     transforms.Resize((64,64)),
     transforms.ToTensor(),
-    transforms.Normalize([0.5],[0.5])
+    transforms.Normalize((0.5,0.5,0.5),(0.5,0.5,0.5))
 ])
 pokemon=ImageFolder(data_dir,transform)
 data_iter=DataLoader(pokemon,batch_size=batch_size,shuffle=True)
 fig=plt.figure(figsize=(4,4))
-
-
-
-
 imgs=data_iter.dataset.imgs
 for i in range(20):
     img = plt.imread(imgs[i*150][0])
@@ -45,7 +41,7 @@ class G_block(nn.Module):
         super(G_block,self).__init__()
         self.conv2d_trans=nn.ConvTranspose2d(in_channels, out_channels, kernel_size=kernel_size,
                                              stride=strides, padding=padding, bias=False)
-        self.batch_norm=nn.BatchNorm2d(out_channels, 0.8)
+        self.batch_norm=nn.BatchNorm2d(out_channels,0.8)
         self.activation=nn.ReLU()
 
     def forward(self,x):
@@ -56,6 +52,11 @@ g_blk=G_block(3,20)
 g_blk.cuda()
 print(g_blk(x).shape)
 
+
+x=Variable(Tensor(np.zeros((2,3,1,1))))
+g_blk=G_block(3,20,strides=1,padding=0)
+g_blk.cuda()
+print(g_blk(x).shape)
 
 
 class net_G(nn.Module):
@@ -73,22 +74,17 @@ class net_G(nn.Module):
             ),
             nn.Tanh()
         )
-        # self._initialize_weights()
     def forward(self,x):
         x=self.model(x)
         return x
-    # def _initialize_weights(self):
-    #     for m in self.modules():
-    #         if isinstance(m,nn.Linear):
-    #             m.weight.data.normal_(0,0.02)
-    #             m.bias.data.zero_()
+
 
 def weights_init_normal(m):
     classname = m.__class__.__name__
     if classname.find("Conv") != -1:
-        torch.nn.init.normal_(m.weight.data, 0.0, 0.02)
+        torch.nn.init.normal_(m.weight.data, mean=0, std=0.02)
     elif classname.find("BatchNorm2d") != -1:
-        torch.nn.init.normal_(m.weight.data, 1.0, 0.02)
+        torch.nn.init.normal_(m.weight.data, mean=1.0, std=0.02)
         torch.nn.init.constant_(m.bias.data, 0.0)
 
 
@@ -96,17 +92,18 @@ x=Variable(Tensor(np.zeros((1,100,1,1))))
 generator=net_G(100)
 generator.cuda()
 generator.apply(weights_init_normal)
+# print(generator)
 print(generator(x).shape)
 
 
-# alphas = [0, 0.2, 0.4, .6]
-# x = np.arange(-2, 1, 0.1)
-# Y = [nn.LeakyReLU(alpha)(Tensor(x)).numpy() for alpha in alphas]
-# plt.figure(figsize=(4,4))
-# for y in Y:
-#     plt.plot(x,y)
-# plt.legend()
-# plt.show()
+alphas = [0, 0.2, 0.4, .6]
+x = np.arange(-2, 1, 0.1)
+Y = [nn.LeakyReLU(alpha)(Tensor(x)).cpu().numpy()for alpha in alphas]
+plt.figure(figsize=(4,4))
+for y in Y:
+    plt.plot(x,y)
+plt.legend()
+plt.show()
 
 
 class D_block(nn.Module):
@@ -114,7 +111,7 @@ class D_block(nn.Module):
                  padding=1,alpha=0.2):
         super(D_block,self).__init__()
         self.conv2d=nn.Conv2d(in_channels,out_channels,kernel_size,strides,padding,bias=False)
-        self.batch_norm=nn.BatchNorm2d(out_channels)
+        self.batch_norm=nn.BatchNorm2d(out_channels,0.8)
         self.activation=nn.LeakyReLU(alpha)
 
     def forward(self,X):
@@ -136,13 +133,15 @@ class net_D(nn.Module):
             D_block(in_channels,n_D),
             D_block(n_D,n_D*2),
             D_block(n_D*2,n_D*4),
-            D_block(n_D*4,n_D*8),
-            nn.Conv2d(n_D*8,1,kernel_size=4,bias=False),
-            nn.Sigmoid()
+            D_block(n_D*4,n_D*8)
         )
+        self.conv=nn.Conv2d(n_D*8,1,kernel_size=4,bias=False)
+        self.activation=nn.Sigmoid()
         # self._initialize_weights()
     def forward(self,x):
         x=self.model(x)
+        x=self.conv(x)
+        x=self.activation(x)
         return x
     # def _initialize_weights(self):
     #     for m in self.modules():
@@ -155,6 +154,7 @@ discriminator=net_D(3)
 discriminator.cuda()
 discriminator.apply(weights_init_normal)
 print(discriminator(x).shape)
+# print(discriminator)
 
 
 
@@ -164,9 +164,9 @@ def update_D(X,Z,net_D,net_G,loss,trainer_D):
     Tensor=torch.cuda.FloatTensor
     ones=Variable(Tensor(np.ones(batch_size,)),requires_grad=False).view(batch_size,1)
     zeros = Variable(Tensor(np.zeros(batch_size,)),requires_grad=False).view(batch_size,1)
-    real_Y=net_D(X)
+    real_Y=net_D(X).view(batch_size,-1)
     fake_X=net_G(Z)
-    fake_Y=net_D(fake_X)
+    fake_Y=net_D(fake_X).view(batch_size,-1)
     loss_D=(loss(real_Y,ones)+loss(fake_Y,zeros))/2
     loss_D.backward()
     trainer_D.step()
@@ -177,18 +177,18 @@ def update_G(Z,net_D,net_G,loss,trainer_G):
     Tensor=torch.cuda.FloatTensor
     ones=Variable(Tensor(np.ones((batch_size,))),requires_grad=False).view(batch_size,1)
     fake_X=net_G(Z)
-    fake_Y=net_D(fake_X)
+    fake_Y=net_D(fake_X).view(batch_size,-1)
     loss_G=loss(fake_Y,ones)
     loss_G.backward()
     trainer_G.step()
     return float(loss_G.sum())
 
 
-def train(net_D,net_G,data_iter,num_epochs,lr_D,lr_G,latent_dim):
+def train(net_D,net_G,data_iter,num_epochs,lr,latent_dim):
     loss=nn.BCELoss()
     Tensor=torch.cuda.FloatTensor
-    trainer_D=torch.optim.Adam(net_D.parameters(),lr=lr_D,betas=(0.5,0.999))
-    trainer_G=torch.optim.Adam(net_G.parameters(),lr=lr_G,betas=(0.5,0.999))
+    trainer_D=torch.optim.Adam(net_D.parameters(),lr=lr,betas=(0.5,0.999))
+    trainer_G=torch.optim.Adam(net_G.parameters(),lr=lr,betas=(0.5,0.999))
     plt.figure(figsize=(7,4))
     d_loss_point=[]
     g_loss_point=[]
@@ -200,6 +200,15 @@ def train(net_D,net_G,data_iter,num_epochs,lr_D,lr_G,latent_dim):
         batch=0
         for X in data_iter:
             X=X[:][0]
+
+
+            # plt.figure(figsize=(14, 6))
+            # for i in range(X.shape[0]):
+            #     im=np.transpose(X[i],(1,2,0))
+            #     plt.imshow(im)
+            #     plt.show()
+
+
             batch+=1
             X=Variable(X.type(Tensor))
             batch_size=X.shape[0]
@@ -211,30 +220,37 @@ def train(net_D,net_G,data_iter,num_epochs,lr_D,lr_G,latent_dim):
             g_loss = update_G(Z, net_D, net_G, loss, trainer_G)
             g_loss_sum+=g_loss
 
-            print(d_loss )
-            print(g_loss )
+
         d_loss_point.append(d_loss_sum/batch)
         g_loss_point.append(g_loss_sum/batch)
+        print(
+            "[Epoch %d/%d]  [D loss: %f] [G loss: %f]"
+            % (epoch, num_epochs,  d_loss_sum/batch_size,  g_loss_sum/batch_size)
+        )
 
 
-    plt.ylabel('Loss', fontdict={'family': 'Times New Roman', 'size': 14})
-    plt.xlabel('epoch', fontdict={'family': 'Times New Roman', 'size': 14})
+    plt.ylabel('Loss', fontdict={ 'size': 14})
+    plt.xlabel('epoch', fontdict={ 'size': 14})
     plt.xticks(range(0,num_epochs+1,3))
     plt.plot(range(1,num_epochs+1),d_loss_point,color='orange',label='discriminator')
     plt.plot(range(1,num_epochs+1),g_loss_point,color='blue',label='generator')
     plt.legend()
     plt.show()
     print(d_loss,g_loss)
-    # Z =Variable(Tensor( np.random.normal(0, 1, size=(100, latent_dim))))
-    # fake_X=net_G(Z).detach().numpy()
-    # plt.figure(figsize=(3.5,2.5))
-    # plt.scatter(data[:,0],data[:,1],color='blue',label='real')
-    # plt.scatter(fake_X[:,0],fake_X[:,1],color='orange',label='generated')
-    # plt.legend
-    # plt.show()
+
+    Z = Variable(Tensor(np.random.normal(0, 1, size=(21, latent_dim, 1, 1))),requires_grad=False)
+    fake_x = generator(Z)
+    fake_x=fake_x.cpu().detach().numpy()
+    plt.figure(figsize=(14,6))
+    for i in range(21):
+        im=np.transpose(fake_x[i])
+        plt.subplot(3,7,i+1)
+        plt.imshow(im)
+    plt.show()
+
 
 if __name__ == '__main__':
 
 
-    lr_D,lr_G,latent_dim,num_epochs=0.005,0.005,100,5
-    train(discriminator,generator,data_iter,num_epochs,lr_D,lr_G,latent_dim)
+    lr,latent_dim,num_epochs=0.005,100,1
+    train(discriminator,generator,data_iter,num_epochs,lr,latent_dim)
