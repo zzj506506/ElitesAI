@@ -1,6 +1,5 @@
 
 import matplotlib.pyplot as plt
-import matplotlib.image as mpimg
 from torch.utils.data import DataLoader
 from torch import nn
 import numpy as np
@@ -8,20 +7,23 @@ from torch.autograd import Variable
 import torch
 from torchvision.datasets import ImageFolder
 from torchvision.transforms import transforms
-from torchvision import datasets
-from PIL import Image
+import zipfile
 cuda = True if torch.cuda.is_available() else False
 
-data_dir='./data/pokemon'
 
+data_dir='./data/'
+with zipfile.ZipFile("pokemon.zip")as f:
+    f.extractall(data_dir)
 batch_size=256
 transform=transforms.Compose([
     transforms.Resize((64,64)),
     transforms.ToTensor(),
     transforms.Normalize((0.5,0.5,0.5),(0.5,0.5,0.5))
 ])
-pokemon=ImageFolder(data_dir,transform)
+pokemon=ImageFolder(data_dir+'pokemon',transform)
 data_iter=DataLoader(pokemon,batch_size=batch_size,shuffle=True)
+
+
 fig=plt.figure(figsize=(4,4))
 imgs=data_iter.dataset.imgs
 for i in range(20):
@@ -43,9 +45,9 @@ class G_block(nn.Module):
                                              stride=strides, padding=padding, bias=False)
         self.batch_norm=nn.BatchNorm2d(out_channels,0.8)
         self.activation=nn.ReLU()
-
     def forward(self,x):
         return self.activation(self.batch_norm(self.conv2d_trans(x)))
+
 Tensor=torch.cuda.FloatTensor
 x=Variable(Tensor(np.zeros((2,3,16,16))))
 g_blk=G_block(3,20)
@@ -92,7 +94,6 @@ x=Variable(Tensor(np.zeros((1,100,1,1))))
 generator=net_G(100)
 generator.cuda()
 generator.apply(weights_init_normal)
-# print(generator)
 print(generator(x).shape)
 
 
@@ -113,7 +114,6 @@ class D_block(nn.Module):
         self.conv2d=nn.Conv2d(in_channels,out_channels,kernel_size,strides,padding,bias=False)
         self.batch_norm=nn.BatchNorm2d(out_channels,0.8)
         self.activation=nn.LeakyReLU(alpha)
-
     def forward(self,X):
         return self.activation(self.batch_norm(self.conv2d(X)))
 
@@ -200,26 +200,17 @@ def train(net_D,net_G,data_iter,num_epochs,lr,latent_dim):
         batch=0
         for X in data_iter:
             X=X[:][0]
-
-
-            # plt.figure(figsize=(14, 6))
-            # for i in range(X.shape[0]):
-            #     im=np.transpose(X[i],(1,2,0))
-            #     plt.imshow(im)
-            #     plt.show()
-
-
             batch+=1
             X=Variable(X.type(Tensor))
             batch_size=X.shape[0]
             Z=Variable(Tensor(np.random.normal(0,1,(batch_size,latent_dim,1,1))))
+
             trainer_D.zero_grad()
             d_loss = update_D(X, Z, net_D, net_G, loss, trainer_D)
             d_loss_sum+=d_loss
             trainer_G.zero_grad()
             g_loss = update_G(Z, net_D, net_G, loss, trainer_G)
             g_loss_sum+=g_loss
-
 
         d_loss_point.append(d_loss_sum/batch)
         g_loss_point.append(g_loss_sum/batch)
@@ -250,7 +241,5 @@ def train(net_D,net_G,data_iter,num_epochs,lr,latent_dim):
 
 
 if __name__ == '__main__':
-
-
     lr,latent_dim,num_epochs=0.005,100,1
     train(discriminator,generator,data_iter,num_epochs,lr,latent_dim)

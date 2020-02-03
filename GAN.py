@@ -21,6 +21,7 @@ print("The covariance matrix is\n%s" % np.dot(A.T, A))
 batch_size=8
 data_iter=DataLoader(data,batch_size=batch_size)
 
+
 class net_G(nn.Module):
     def __init__(self):
         super(net_G,self).__init__()
