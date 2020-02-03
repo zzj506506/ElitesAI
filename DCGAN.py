@@ -243,7 +243,7 @@ def train(net_D,net_G,data_iter,num_epochs,lr,latent_dim):
     fake_x=fake_x.cpu().detach().numpy()
     plt.figure(figsize=(14,6))
     for i in range(21):
-        im=np.transpose(fake_x[i])
+        im=np.transpose(fake_x[i],(1,2,0))
         plt.subplot(3,7,i+1)
         plt.imshow(im)
     plt.show()
