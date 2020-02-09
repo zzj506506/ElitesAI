@@ -71,7 +71,8 @@ class Net(nn.Module):
         x = self.conv(x)
         x=self.conv_t(x)
         return x
-
+# for param in net.parameters():
+#     param.requires_grad = False
 net=Net(net,num_classes)
 
 conv_trans = nn.ConvTranspose2d(in_channels=3,out_channels=3, kernel_size=4, padding=1, stride=2)
@@ -127,6 +128,8 @@ def voc_rand_crop(data, label,img_h,img_w):
     label = np.array(label.getdata()).reshape(label.size[1], label.size[0], 3)
     return data, label
 
+
+
 voc_dir='./data/VOCtrainval_11-May-2012/VOCdevkit/VOC2012'
 def read_voc_images(root=voc_dir, is_train=True):
     txt_fname = '%s/ImageSets/Segmentation/%s' % (
@@ -156,7 +159,7 @@ class VOCSegDataset(Dataset):
     def normalize_image(self, img):
         transform=transforms.Compose([
             transforms.ToTensor(),
-            transforms.Normalize(self.rgb_mean,self.rgb_std),
+            transforms.Normalize(mean=self.rgb_mean,std=self.rgb_std),
             transforms.ToPILImage()
         ])
         return transform(img)
@@ -170,9 +173,6 @@ class VOCSegDataset(Dataset):
         feature, label = voc_rand_crop(self.features[idx], self.labels[idx],
                                        *self.crop_size)
         label=voc_label_indices(label, self.colormap2label)
-        # onehot_label = np.array([[[1 if i == m else 0 for i in range(21)] for m in l]for l in label])
-        # label=torch.LongTensor(label).unsqueeze(0)
-        # label=torch.zeros(21,480,320).scatter_(dim=-1, index=label, value=1)
         return (feature.transpose((2, 0, 1)),label)
 
     def __len__(self):
@@ -195,23 +195,14 @@ test_iter = DataLoader(voc_test, batch_size,num_workers=num_workers)
 # d2l.train(train_iter, test_iter, net, loss, trainer, ctx, num_epochs=5)
 
 def train(train_iter,net,num_epochs=2):
-    CE_loss=nn.NLLLoss2d()
-    trainer=torch.optim.SGD(lr=0.01,weight_decay=1e-4,params=net.parameters())
+    CE_loss=nn.CrossEntropyLoss()
+    trainer=torch.optim.SGD(filter(lambda p: p.requires_grad, net.parameters()),lr=0.1,weight_decay=1e-3)
     for epoch in range(1,num_epochs+1):
         for iter,(data,label) in enumerate(train_iter):
-
-            # plt.figure(figsize=(10,8))
-            # plt.subplot(1,2,1)
-            # plt.imshow(transforms.ToPILImage()(torch.tensor(data[0],dtype=torch.uint8)))
-            # plt.subplot(1, 2, 2)
-            # plt.imshow(transforms.ToPILImage()(torch.tensor(label[0],dtype=torch.uint8)))
-            # plt.show()
-
 
             data=Variable(data.float().cuda())
             label=Variable(label.long().cuda())
             output=net(data)
-            output=nn.functional.log_softmax(output,dim=1)
             loss=CE_loss(output,label)
             trainer.zero_grad()
             loss.backward()
@@ -224,7 +215,7 @@ train(train_iter,net,num_epochs=5)
 def predict(img):
     transform = transforms.Compose([
         transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         transforms.ToPILImage()
     ])
     X=transform(img)
