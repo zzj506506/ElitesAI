@@ -2,20 +2,14 @@ import random
 
 import matplotlib.pyplot as plt
 from torchvision.transforms import ToPILImage
-# from matplotlib import image
 from PIL import Image as image
 from torch.utils.data import DataLoader,Dataset
 from torch import nn
 import numpy as np
 from torch.autograd import Variable
 import torch
-from torchvision.datasets import ImageFolder
 from torchvision.transforms import transforms
-import zipfile
-import os
-from enum import Enum
 import sys
-from scipy import misc
 from torchvision.models import resnet18
 cuda = True if torch.cuda.is_available() else False
 
@@ -41,7 +35,7 @@ conv_trans = nn.ConvTranspose2d(in_channels=10,out_channels=3, kernel_size=4, pa
 print(conv_trans(Y).shape)
 
 pretrained_net = resnet18(pretrained=True)
-print(pretrained_net)
+# print(pretrained_net)
 
 net=nn.Sequential(*list(pretrained_net.children())[:-2])
 X = torch.Tensor(np.random.uniform(size=(1, 3, 320, 480)))
@@ -49,6 +43,18 @@ print(net(X).shape)
 
 num_classes = 21
 
+def bilinear_kernel(in_channels, out_channels, kernel_size):
+    factor = (kernel_size + 1) // 2
+    if kernel_size % 2 == 1:
+        center = factor - 1
+    else:
+        center = factor - 0.5
+    og = np.ogrid[:kernel_size, :kernel_size]
+    filt = (1 - abs(og[0] - center) / factor) *(1 - abs(og[1] - center) / factor)
+    weight = np.zeros((in_channels, out_channels, kernel_size, kernel_size),
+                      dtype='float32')
+    weight[range(in_channels), range(out_channels), :, :] = filt
+    return torch.from_numpy(weight)
 
 class Net(nn.Module):
     def __init__(self, model,num_classes):
@@ -57,56 +63,37 @@ class Net(nn.Module):
 
         self.conv = nn.Conv2d(in_channels=512,out_channels=num_classes, kernel_size=1)
         self.conv_t=nn.ConvTranspose2d(in_channels=num_classes,out_channels=num_classes, kernel_size=64, padding=16,stride=32)
-        # self.sigmoid=nn.Sigmoid()
+        nn.init.xavier_uniform_(self.conv.weight, gain=1)
+        self.conv_t.weight.data = nn.Parameter(torch.Tensor(bilinear_kernel(num_classes, num_classes, 64)))
 
     def forward(self, x):
         x = self.resnet_layer(x)
-
         x = self.conv(x)
         x=self.conv_t(x)
-        # return self.sigmoid(x)
         return x
 
 net=Net(net,num_classes)
 
-
-
-def bilinear_kernel(in_channels, out_channels, kernel_size):
-   factor = (kernel_size + 1) // 2
-   if kernel_size % 2 == 1:
-       center = factor - 1
-   else:
-       center = factor - 0.5
-   og = np.ogrid[:kernel_size, :kernel_size]
-   filt = (1 - abs(og[0] - center) / factor) * (1 - abs(og[1] - center) / factor)
-   weight = np.zeros((in_channels, out_channels, kernel_size, kernel_size), dtype='float32')
-   weight[range(in_channels), range(out_channels), :, :] = filt
-   return torch.from_numpy(weight)
-
 conv_trans = nn.ConvTranspose2d(in_channels=3,out_channels=3, kernel_size=4, padding=1, stride=2)
-conv_trans.weight=nn.Parameter(torch.Tensor(bilinear_kernel(3, 3, 4)))
-img = image.open('./img/catdog.jpg')
-X=np.array(img.getdata()).reshape(img.size[1], img.size[0], 3)
-print(X.shape)
-X = np.expand_dims(X.astype('float32').transpose((2, 0, 1)),axis=0) / 255
-X=torch.Tensor(X)
-Y = conv_trans(X)
-out_img = Y[0].transpose(1, 0).transpose(0,2)
-print(out_img.shape)
-plt.figure(figsize=(10,8))
-plt.subplot(2,1,1)
-plt.imshow(img)
-plt.axis('off')
-plt.subplot(2,1,2)
-plt.imshow(ToPILImage()(out_img))
-plt.axis('off')
-plt.show()
+conv_trans.weight.data=nn.Parameter(torch.Tensor(bilinear_kernel(3, 3, 4)))
+# img = image.open('./img/catdog.jpg')
+# X=np.array(img.getdata()).reshape(img.size[1], img.size[0], 3)
+# print(X.shape)
+# X = np.expand_dims(X.astype('float32').transpose((2, 0, 1)),axis=0) / 255
+# X=torch.Tensor(X)
+# Y = conv_trans(X)
+# out_img = Y[0]
+# print(out_img.shape)
+# plt.figure(figsize=(20,20))
+# plt.subplot(1,2,1)
+# plt.imshow(img)
+# # plt.axis('off')
+# plt.subplot(1,2,2)
+# plt.imshow(ToPILImage()(out_img))
+# # plt.axis('off')
+# plt.show()
 
-# nn.init.constant(net.conv_t.weight,torch.Tensor(bilinear_kernel(num_classes, num_classes, 64)))
-nn.init.xavier_uniform(net.conv.weight)
-net.conv_t.weight=nn.Parameter(torch.Tensor(bilinear_kernel(num_classes, num_classes, 64)))
-print(net.conv.weight)
-print(net.conv_t.weight)
+
 net.cuda()
 VOC_COLORMAP = [[0, 0, 0], [128, 0, 0], [0, 128, 0], [128, 128, 0],
                 [0, 0, 128], [128, 0, 128], [0, 128, 128], [128, 128, 128],
@@ -128,16 +115,14 @@ def voc_label_indices(colormap, colormap2label):
     idx = ((colormap[:, :, 0] * 256 + colormap[:, :, 1]) * 256+ colormap[:, :, 2])
     return colormap2label[idx]
 
-def voc_rand_crop(data, label,img_w,img_h):
-    data=image.fromarray(data.astype('uint8')).convert('RGB')
-    # label=image.fromarray(label.astype('uint8')).convert('RGB')
+def voc_rand_crop(data, label,img_h,img_w):
     width1 = random.randint(0, data.size[1] - img_w)
     height1 = random.randint(0, data.size[0] - img_h)
     width2 = width1 + img_w
     height2 = height1 + img_h
 
-    data = data.crop((width1, height1, width2, height2))
-    label = label.crop((width1, height1, width2, height2))
+    data = data.crop((height1, width1, height2, width2))
+    label = label.crop((height1, width1, height2, width2))
     data=np.array(data.getdata()).reshape(data.size[1], data.size[0], 3)
     label = np.array(label.getdata()).reshape(label.size[1], label.size[0], 3)
     return data, label
@@ -154,7 +139,6 @@ def read_voc_images(root=voc_dir, is_train=True):
         labels[i] = image.open('%s/SegmentationClass/%s.png' % (root, fname)).convert('RGB')
     return features, labels
 
-train_features, train_labels = read_voc_images()
 
 class VOCSegDataset(Dataset):
     def __init__(self, is_train, crop_size, voc_dir, colormap2label):
@@ -164,29 +148,37 @@ class VOCSegDataset(Dataset):
         features, labels = read_voc_images(root=voc_dir, is_train=is_train)
         self.features = [self.normalize_image(feature)
                          for feature in self.filter(features)]
+        # self.features = self.filter(features)
         self.labels = self.filter(labels)
         self.colormap2label = colormap2label
         print('read ' + str(len(self.features)) + ' examples')
 
     def normalize_image(self, img):
-        img = np.array(img).reshape(img.size[1], img.size[0], 3)
-        return (img.astype('float32') / 255 - self.rgb_mean) / self.rgb_std
+        transform=transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize(self.rgb_mean,self.rgb_std),
+            transforms.ToPILImage()
+        ])
+        return transform(img)
 
     def filter(self, imgs):
         return [img for img in imgs if (
-            img.size[1] > self.crop_size[0] and
-            img.size[0] > self.crop_size[1])]
+            img.size[0] > self.crop_size[0] and
+            img.size[1] > self.crop_size[1])]
 
     def __getitem__(self, idx):
         feature, label = voc_rand_crop(self.features[idx], self.labels[idx],
                                        *self.crop_size)
         label=voc_label_indices(label, self.colormap2label)
+        # onehot_label = np.array([[[1 if i == m else 0 for i in range(21)] for m in l]for l in label])
+        # label=torch.LongTensor(label).unsqueeze(0)
+        # label=torch.zeros(21,480,320).scatter_(dim=-1, index=label, value=1)
         return (feature.transpose((2, 0, 1)),label)
 
     def __len__(self):
         return len(self.features)
 
-crop_size=(320,480)
+crop_size=(480,320)
 voc_train = VOCSegDataset(True, crop_size, voc_dir, colormap2label)
 voc_test = VOCSegDataset(False, crop_size, voc_dir, colormap2label)
 
@@ -202,32 +194,49 @@ test_iter = DataLoader(voc_test, batch_size,num_workers=num_workers)
 #                                                       'wd': 1e-3})
 # d2l.train(train_iter, test_iter, net, loss, trainer, ctx, num_epochs=5)
 
-def train(train_iter,test_iter,net,num_epochs=5):
-    CE_loss=nn.CrossEntropyLoss()
-    trainer=torch.optim.SGD(lr=0.1,weight_decay=1e-3,params=net.parameters())
-    # net.cuda()
-    # Tensor = torch.cuda.Tensor
+def train(train_iter,net,num_epochs=2):
+    CE_loss=nn.NLLLoss2d()
+    trainer=torch.optim.SGD(lr=0.01,weight_decay=1e-4,params=net.parameters())
     for epoch in range(1,num_epochs+1):
         for iter,(data,label) in enumerate(train_iter):
+
+            # plt.figure(figsize=(10,8))
+            # plt.subplot(1,2,1)
+            # plt.imshow(transforms.ToPILImage()(torch.tensor(data[0],dtype=torch.uint8)))
+            # plt.subplot(1, 2, 2)
+            # plt.imshow(transforms.ToPILImage()(torch.tensor(label[0],dtype=torch.uint8)))
+            # plt.show()
+
+
+            data=Variable(data.float().cuda())
+            label=Variable(label.long().cuda())
+            output=net(data)
+            output=nn.functional.log_softmax(output,dim=1)
+            loss=CE_loss(output,label)
             trainer.zero_grad()
-            loss=CE_loss(net(data.float().cuda()),label.long().cuda())
             loss.backward()
             trainer.step()
             print("epoch{}, iter{}, loss: {}".format(epoch, iter, loss.item()))
 
 
-train(train_iter,test_iter,net)
+train(train_iter,net,num_epochs=5)
 
 def predict(img):
-    X = img
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+        transforms.ToPILImage()
+    ])
+    X=transform(img)
     X = np.expand_dims(X,axis=0)
-    X=torch.cuda.FloatTensor(X).transpose(1, 2).transpose(1, 3)
-    pred = np.argmax(net(X).cpu().detach(), axis=1)
-    return pred.reshape((pred.shape[1], pred.shape[2]))
+    X=torch.cuda.FloatTensor(X).transpose(1, 3).transpose(2,3)
+    pred = np.argmax(net(X).cpu().detach(),axis=1)
+    return pred
 
 
 def label2image(colormap,pred):
-    X = pred.numpy().astype('int32').tolist()
+    X = pred.numpy().astype('int32')
+    X=X[0].tolist()
     for i in range(len(X)):
         for j in range(len(X[0])):
             X[i][j]=colormap[X[i][j]]
@@ -237,6 +246,7 @@ test_images, test_labels = read_voc_images(is_train=False)
 n, imgs = 4, []
 for i in range(n):
     X=test_images[i].crop((0, 0, 480, 320))
+
     pred = label2image(VOC_COLORMAP,predict(X))
     imgs += [X, transforms.ToPILImage()(pred), test_labels[i].crop((0, 0, 480, 320))]
 
@@ -244,12 +254,12 @@ fig=plt.figure(figsize=(6,8))
 for i in range(n):
     plt.subplot(n,3,i*3+1)
     plt.imshow(imgs[i*3])
-    plt.axis('off')
+    # plt.axis('off')
     plt.subplot(n,3,i*3+2)
     plt.imshow(imgs[i*3+1])
-    plt.axis('off')
+    # plt.axis('off')
     plt.subplot(n,3,i*3+3)
     plt.imshow(imgs[i*3+2])
-    plt.axis('off')
+    # plt.axis('off')
 plt.show()
 # d2l.show_images(imgs[::3] + imgs[1::3] + imgs[2::3], 3, n);
