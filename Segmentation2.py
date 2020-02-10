@@ -116,16 +116,16 @@ def voc_label_indices(colormap, colormap2label):
     idx = ((colormap[:, :, 0] * 256 + colormap[:, :, 1]) * 256+ colormap[:, :, 2])
     return colormap2label[idx]
 
-def voc_rand_crop(data, label,img_h,img_w):
-    width1 = random.randint(0, data.size[1] - img_w)
-    height1 = random.randint(0, data.size[0] - img_h)
+def voc_rand_crop(data, label,img_w,img_h):
+    width1 = random.randint(0, data.size[0] - img_w)
+    height1 = random.randint(0, data.size[1] - img_h)
     width2 = width1 + img_w
     height2 = height1 + img_h
 
-    data = data.crop((height1, width1, height2, width2))
-    label = label.crop((height1, width1, height2, width2))
-    data=np.array(data.getdata()).reshape(data.size[0], data.size[1], 3)
-    label = np.array(label.getdata()).reshape(label.size[0], label.size[1], 3)
+    data = data.crop((width1, height1, width2, height2))
+    label = label.crop((width1, height1, width2, height2))
+    data=np.array(data.getdata()).reshape(data.size[1], data.size[0], 3)
+    label = np.array(label.getdata()).reshape(label.size[1], label.size[0], 3)
     return data, label
 
 
@@ -212,8 +212,8 @@ def predict(img):
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
     X=transform(img)
-    X=X.transpose(1,2).unsqueeze(0).cuda()
-    pred = np.argmax(net(X).cpu().detach(),axis=1)
+    X=X.unsqueeze(0).cuda()
+    pred = np.argmax(net(X).cpu().detach(),axis=1).transpose(2,1)
     return pred
 
 
@@ -228,10 +228,10 @@ def label2image(colormap,pred):
 test_images, test_labels = read_voc_images(is_train=False)
 n, imgs = 4, []
 for i in range(n):
-    X=test_images[i].crop((0, 0, 480, 320))
+    X=test_images[i].crop((0, 0, 480,320))
 
     pred = label2image(VOC_COLORMAP,predict(X))
-    imgs += [X, transforms.ToPILImage()(pred), test_labels[i].crop((0, 0, 480, 320))]
+    imgs += [X, transforms.ToPILImage()(pred), test_labels[i].crop((0, 0, 480,320))]
 
 fig=plt.figure(figsize=(6,8))
 for i in range(n):
