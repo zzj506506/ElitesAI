@@ -124,8 +124,8 @@ def voc_rand_crop(data, label,img_h,img_w):
 
     data = data.crop((height1, width1, height2, width2))
     label = label.crop((height1, width1, height2, width2))
-    data=np.array(data.getdata()).reshape(data.size[1], data.size[0], 3)
-    label = np.array(label.getdata()).reshape(label.size[1], label.size[0], 3)
+    data=np.array(data.getdata()).reshape(data.size[0], data.size[1], 3)
+    label = np.array(label.getdata()).reshape(label.size[0], label.size[1], 3)
     return data, label
 
 
@@ -173,7 +173,7 @@ class VOCSegDataset(Dataset):
         feature, label = voc_rand_crop(self.features[idx], self.labels[idx],
                                        *self.crop_size)
         label=voc_label_indices(label, self.colormap2label)
-        return (feature.transpose((2, 0, 1)),label)
+        return (feature.transpose((2, 0, 1))/255,label)
 
     def __len__(self):
         return len(self.features)
@@ -187,19 +187,13 @@ num_workers = 0 if sys.platform.startswith('win32') else 4
 train_iter = DataLoader(voc_train, batch_size, shuffle=True, num_workers=num_workers)
 test_iter = DataLoader(voc_test, batch_size,num_workers=num_workers)
 
-# ctx = d2l.try_all_gpus()
-# loss = gloss.SoftmaxCrossEntropyLoss(axis=1)
-# net.collect_params().reset_ctx(ctx)
-# trainer = gluon.Trainer(net.collect_params(), 'sgd', {'learning_rate': 0.1,
-#                                                       'wd': 1e-3})
-# d2l.train(train_iter, test_iter, net, loss, trainer, ctx, num_epochs=5)
 
 def train(train_iter,net,num_epochs=2):
     CE_loss=nn.CrossEntropyLoss()
     trainer=torch.optim.SGD(filter(lambda p: p.requires_grad, net.parameters()),lr=0.1,weight_decay=1e-3)
     for epoch in range(1,num_epochs+1):
         for iter,(data,label) in enumerate(train_iter):
-
+            # data=transforms.ToTensor()(data)
             data=Variable(data.float().cuda())
             label=Variable(label.long().cuda())
             output=net(data)
@@ -216,11 +210,9 @@ def predict(img):
     transform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        transforms.ToPILImage()
     ])
     X=transform(img)
-    X = np.expand_dims(X,axis=0)
-    X=torch.cuda.FloatTensor(X).transpose(1, 3).transpose(2,3)
+    X=X.transpose(1,2).unsqueeze(0).cuda()
     pred = np.argmax(net(X).cpu().detach(),axis=1)
     return pred
 
@@ -231,7 +223,7 @@ def label2image(colormap,pred):
     for i in range(len(X)):
         for j in range(len(X[0])):
             X[i][j]=colormap[X[i][j]]
-    return np.array(X).astype('uint8')
+    return np.array(X).transpose((1,0,2)).astype('uint8')
 
 test_images, test_labels = read_voc_images(is_train=False)
 n, imgs = 4, []
